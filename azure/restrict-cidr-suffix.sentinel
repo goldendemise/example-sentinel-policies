@@ -1,0 +1,42 @@
+import "tfplan/v2" as tfplan
+import "strings"
+
+param actions default [
+	["no-op"],
+	["create"],
+	["update"],
+]
+
+param subnet_mask default "/24"
+
+all_azurerm_virtual_networks = filter tfplan.resource_changes as _, rc {
+	rc.type is "azurerm_virtual_network" and
+		rc.mode is "managed" and
+		rc.change.actions in actions
+}
+
+# Takes an address space and subnet mask and returns whether it has the required subnet mask (using string matching)
+check_CIDR_subnet_compliance = func(address_space, required_subnet_mask) {
+	return strings.has_suffix(address_space, required_subnet_mask)
+}
+
+violations = filter all_azurerm_virtual_networks as avn {
+	# if you have multiple address_spaces, you will need to iterate over them
+	not check_CIDR_subnet_compliance(all_azurerm_virtual_networks[avn].change.after.address_space[0], subnet_mask)
+}
+
+if length(violations) > 0 {
+  for violations as violation {
+    print("CIDR violation:", violations[violation].change.after.address_space)
+  }
+}
+
+# This rule ensures that azurerm address spaces contain the subnet mask specified on the declared 'subnet_mask' param
+address_space_compliant = rule when length(violations) > 0 {
+	false
+}
+
+main = rule {
+	address_space_compliant
+}
+
